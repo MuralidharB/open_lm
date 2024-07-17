@@ -51,6 +51,7 @@ def evaluate(model, data, start_epoch, args, writer):
     loss = torch.nn.CrossEntropyLoss(reduction="none")
 
     # by default the dataloader will be exhausted
+    import pdb;pdb.set_trace()
     for i, batch in enumerate(dataloader):
         if i == dataloader.num_batches and not exhaust_loader:
             break
@@ -168,6 +169,8 @@ def evaluate(model, data, start_epoch, args, writer):
 
 def evaluate_loop(model, data_list, start_epoch, args, writer):
     log_data_list = []
+    log_data_list.append(evaluate(model, data_list[0], start_epoch, args, writer))
+    return log_data_list
     for i, data in enumerate(data_list):
         args_copy = copy.deepcopy(args)
         args_copy.val_data = [args.val_data[i]]

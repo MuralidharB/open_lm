@@ -32,6 +32,7 @@ except ImportError:
 
 try:  # optional import
     from mamba_ssm import MambaLMHeadModel
+    from mamba_ssm.models.config_mamba import MambaConfig
 except ImportError:
     MambaLMHeadModel = None
 
@@ -441,6 +442,12 @@ def create_params(args):
 
     if "mamba" in args.model:
         return {
+            "d_model": 128,
+            "n_layer": cfg["n_layer"],
+            "vocab_size": 8192,
+            "seq_len": 8192,
+        }
+        return {
             "d_model": cfg["d_model"],
             "n_layer": cfg["n_layer"],
             "vocab_size": cfg["vocab_size"],
@@ -482,10 +489,18 @@ class Mamba(nn.Module):
             )
 
         super().__init__()
+
         self.seq_len = params.pop("seq_len")
         self.vocab_size = params["vocab_size"]
+        self.n_layer = params['n_layer']
+        self.d_model = params['d_model']
+        
+        mambaconfig = MambaConfig()
+        mambaconfig.d_model = self.d_model
+        mambaconfig.n_layer = self.n_layer
+        mambaconfig.vocab_size = self.vocab_size
 
-        self.model = MambaLMHeadModel(**params)
+        self.model = MambaLMHeadModel(mambaconfig)
 
     def reset_parameters(self):
         return

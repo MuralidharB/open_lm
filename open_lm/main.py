@@ -306,7 +306,7 @@ def cleanup(sync_process, distributed=False):
 def main(args):
     args = parse_args(args)
 
-    requires_training = args.train_data or args.dataset_type == "synthetic" or args.dataset_manifest is not None
+    requires_training = args.train_data or args.dataset_type in ["synthetic", "log"] or args.dataset_manifest is not None
 
     if torch.cuda.is_available():
         # This enables tf32 on Ampere GPUs which is only 8% slower than

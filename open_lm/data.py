@@ -13,6 +13,9 @@ from multiprocessing import Value
 from functools import partial
 from itertools import islice
 import copy
+from pathlib import Path
+import re
+import glob
 
 import numpy as np
 import pandas as pd
@@ -101,6 +104,38 @@ class SyntheticDataset(Dataset):
     def __getitem__(self, idx):
         generator = torch.Generator().manual_seed(idx)
         return ((torch.rand(self.seq_len + 1, generator=generator) * self.vocab_size).long(),)
+
+
+class LogDataset(Dataset):
+    def __init__(self, seq_len=8192, vocab_size=8192, dataset_size=6400):
+        self.vocab_size = vocab_size
+        self.seq_len = seq_len
+        self.dataset_size = dataset_size
+        self.tokens = []
+
+    def __len__(self):
+        return self.dataset_size
+
+    def __getitem__(self, idx):
+        if not self.tokens:
+            templates_root = '/home/murali/src/POCs/ai-monitoring/scripts/metaflow/logs/windows/templates/classification/'
+            tokens_path = os.path.join(templates_root, "tokens")
+            hotencoded_labels = torch.load(os.path.join(tokens_path, "labels"))
+            num_labels = hotencoded_labels.shape[1]
+            label_base=7900
+
+            for x in Path(tokens_path).rglob("input_ids*"):
+                tid = int(re.findall(r'\d+', os.path.basename(x))[0])
+                label = torch.nonzero(hotencoded_labels[tid])[0][0].item() + label_base
+                input_ids = torch.load(os.path.join(tokens_path, "input_ids-%d"%tid))
+                if input_ids.shape[1] < 8193:
+                    while input_ids.shape[1] < 8193:
+                        input_ids = torch.concat((input_ids, input_ids[:, :(8192-input_ids.shape[1])], torch.tensor([[label]])), dim=1)
+                else:
+                    input_ids = torch.concat((input_ids[:, :8192], torch.tensor([[label]])), dim=1)
+                attention_mask = torch.load(os.path.join(tokens_path, "attention_mask-%d"%tid))
+                self.tokens.append(input_ids)
+        return self.tokens[idx]
 
 
 def expand_urls(urls, weights=None):
@@ -545,9 +580,33 @@ def get_synthetic_dataset(args, is_train, epoch, tokenizer, data_key, floor):
     return DataInfo(dataloader, sampler)
 
 
+def get_log_dataset(args, is_train, epoch, tokenizer, data_key, floor):
+    print(f"{args.train_num_samples=}")
+    dataset = LogDataset(seq_len=args.seq_len, vocab_size=args.vocab_size, dataset_size=args.train_num_samples)
+    print(f"{len(dataset)=}")
+    sampler = DistributedSampler(dataset) if args.distributed and is_train else None
+    shuffle = is_train and sampler is None
+
+    dataloader = DataLoader(
+        dataset,
+        batch_size=args.per_gpu_batch_size,
+        shuffle=shuffle,
+        num_workers=args.workers,
+        pin_memory=True,
+        sampler=sampler,
+        drop_last=is_train,
+    )
+    dataloader.num_samples = len(dataset)
+    dataloader.num_batches = len(dataloader)
+
+    return DataInfo(dataloader, sampler)
+
+
 def get_dataset_fn(dataset_type):
     if dataset_type == "synthetic":
         return get_synthetic_dataset
+    elif dataset_type == "log":
+        return get_log_dataset
     else:
         return get_wds_dataset
 
@@ -558,11 +617,14 @@ def get_data(args, epoch=0, tokenizer=None, skip_train=False, floor=True):
     if skip_train:
         data["train"] = None
     else:
-        if args.train_data or args.dataset_type == "synthetic":
+        if args.train_data or args.dataset_type in ["synthetic", "log"]:
             # train data is treated as a shard list where all data is combined and tained on
             data["train"] = get_dataset_fn(args.dataset_type)(
                 args, is_train=True, epoch=epoch, tokenizer=tokenizer, data_key=args.data_key, floor=floor
             )
+            if args.dataset_type in ["log"]:
+                data["val_list"] = []
+                data["val_list"].append({"val": data["train"]})
 
     if args.val_data:
         # val data is treated as independent val sets to be evaluated
